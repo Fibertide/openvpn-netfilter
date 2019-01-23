@@ -129,7 +129,7 @@ def iptables(args, raiseEx=True):
 class IpsetFailure (Exception):
 	pass
 
-def ipset(args, raiseEx=True):
+def ipset(args, raiseEx=False):
 	"""
 		Manages an IP Set using the ipset binary
 
