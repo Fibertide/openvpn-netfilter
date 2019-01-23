@@ -369,6 +369,7 @@ def add_chain(usersrcip, usercn, dev):
 	iptables('-A OUTPUT -d ' + usersrcip + ' -j ' + usersrcip)
 	iptables('-A INPUT -s ' + usersrcip + ' -j ' + usersrcip)
 	iptables('-A FORWARD -s ' + usersrcip + ' -j ' + usersrcip)
+	iptables('-A FORWARD -d ' + usersrcip + ' -j ' + usersrcip)
 	comment = usercn + ' groups: ' + usergroups
 	if len(comment) > 254:
 		comment = comment[:243] + '..truncated...'
@@ -391,6 +392,7 @@ def del_chain(usersrcip, dev):
 	iptables('-D OUTPUT -d ' + usersrcip + ' -j ' + usersrcip, False)
 	iptables('-D INPUT -s ' + usersrcip + ' -j ' + usersrcip, False)
 	iptables('-D FORWARD -s ' + usersrcip + ' -j ' + usersrcip, False)
+	iptables('-D FORWARD -d ' + usersrcip + ' -j ' + usersrcip, False)
 	iptables('-F ' + usersrcip, False)
 	iptables('-X ' + usersrcip, False)
 	ipset("--destroy " + usersrcip, False)
