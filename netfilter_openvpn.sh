@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # This is also removed after everything has been successfull by the python script.
 # We remove on delete for safety in case the python script fails so that it doesn't forbid a potential future client.
 operation=$1
