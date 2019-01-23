@@ -61,12 +61,20 @@ if config == None:
 	print("Failed to load config")
 	sys.exit(1)
 
-#MozDef Logging
-mdmsg = mozdef.MozDefMsg(config.MOZDEF_HOST, tags=['openvpn', 'netfilter'])
-if config.USE_SYSLOG:
-	mdmsg.sendToSyslog = True
-if not config.USE_MOZDEF:
-	mdmsg.syslogOnly = True
+class MDMock:
+        def send(self, summary='', details=None):
+                print("netfilter: %s" % summary)
+                print("netfilter: %s" % details)
+
+
+# #MozDef Logging
+# mdmsg = mozdef.MozDefMsg(config.MOZDEF_HOST, tags=['openvpn', 'netfilter'])
+# if config.USE_SYSLOG:
+# 	mdmsg.sendToSyslog = True
+# if not config.USE_MOZDEF:
+# 	mdmsg.syslogOnly = True
+
+mdmsg = MDMock()
 
 @contextmanager
 def lock_timeout(seconds):
