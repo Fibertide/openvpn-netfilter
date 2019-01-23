@@ -220,6 +220,9 @@ def load_ldap():
 		ulist = []
 		hlist = []
 		group = grp[1]['cn'][0]
+		if 'member' not in grp[1]:
+			# This is not a group.
+			continue
 		for u in grp[1]['member']:
 			try:
 				ulist.append(u.split('=')[1].split(',')[0])
