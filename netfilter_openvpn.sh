@@ -3,6 +3,7 @@
 # We remove on delete for safety in case the python script fails so that it doesn't forbid a potential future client.
 operation=$1
 address=$2
+common_name=$3
 # Use this if you need to use "username as common name". This has security implications:
 # username is arbitrary and sent by the user, common_name matches a signed certificate common bame and cannot be forged.
 #common_name=${username}
@@ -20,6 +21,6 @@ else
 	}
 fi
 
-${SUDO} /usr/lib/openvpn/plugins/netfilter_openvpn.py ${operation} &
+${SUDO} -E /usr/lib/openvpn/plugins/netfilter_openvpn.py ${operation} &
 disown
 exit 0
