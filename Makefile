@@ -4,7 +4,7 @@ PREFIX	:= /usr
 
 all: 
 
-install: plugin
+install:
 	mkdir -p $(DESTDIR)$(PREFIX)/lib/openvpn/plugins
 	mkdir -p $(DESTDIR)/etc/openvpn
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
