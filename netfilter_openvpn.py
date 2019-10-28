@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # vim: set noexpandtab:ts=4
 # Requires:
 # python-ldap
@@ -44,7 +44,6 @@ import ldap
 import fcntl
 import time
 import signal, errno
-import mozdef
 from contextlib import contextmanager
 import imp
 
@@ -65,8 +64,8 @@ if config == None:
 
 class MDMock:
         def send(self, summary='', details=None):
-                print("netfilter: %s" % summary)
-                print("netfilter: %s" % details)
+                print(("netfilter: %s" % summary))
+                print(("netfilter: %s" % details))
 
 
 # #MozDef Logging
@@ -125,6 +124,9 @@ def iptables(args, raiseEx=True):
                 False on error if raiseEx=False
     """
     command = "%s %s" % (config.IPTABLES, args)
+    if DRY_RUN:
+        print(command)
+        return True
     status = os.system(command)
     if status == -1:
         raise IptablesFailure("failed to invoke iptables (%s)" % (command,))
@@ -147,6 +149,9 @@ def ipset(args, raiseEx=False):
                 False on error if raiseEx=False
     """
     command = "%s %s" % (config.IPSET, args)
+    if DRY_RUN:
+        print(command)
+        return True
     status = os.system(command)
     if status == -1:
         raise IpsetFailure("failed to invoke ipset (%s)" % (command,))
@@ -229,16 +234,16 @@ def load_ldap():
     for grp in res:
         ulist = []
         hlist = []
-        group = grp[1]['cn'][0]
+        group = grp[1]['cn'][0].decode('utf8')
         if 'member' not in grp[1]:
             # This is not a group.
             continue
         for u in grp[1]['member']:
             try:
-                ulist.append(u.split('=')[1].split(',')[0])
+                ulist.append(u.decode('utf8').split('=')[1].split(',')[0])
             except:
                 mdmsg.send(summary='Failed to load user from LDAP', details={'user': u, 'group': group})
-        if grp[1].has_key('ipHostNumber'):
+        if 'ipHostNumber' in grp[1]:
             hlist = grp[1]['ipHostNumber']
         schema[group] = {'cn': ulist, 'networks': hlist}
     return schema
@@ -416,7 +421,7 @@ def main():
         usercn = os.environ.get('username', None)
 
     if len(sys.argv) < 2:
-        print("USAGE: %s <operation>" % sys.argv[0])
+        print(("USAGE: %s <operation>" % sys.argv[0]))
         return False
     operation = sys.argv[1]
 
@@ -432,6 +437,13 @@ def main():
         mdmsg.send(summary='Logout success: OpenVPN endpoint disconnected',
             details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
         del_chain(vpn_ip, device)
+    elif operation == 'test-rules':
+        mdmsg.send(summary='Test rules mode',
+            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        global DRY_RUN
+        DRY_RUN = True
+        usergroups = load_rules(vpn_ip, usercn, device)
+        print(usergroups)
     else:
         mdmsg.send(summary='Logging success: OpenVPN unknown operation',
             details={'srcip': client_ip, 'srcport': client_port, 'user': usercn})
