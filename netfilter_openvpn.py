@@ -42,7 +42,6 @@ import os
 import sys
 import ldap
 import fcntl
-import time
 import signal, errno
 from contextlib import contextmanager
 import imp
@@ -58,7 +57,7 @@ for cfg in cfg_path:
     except:
         pass
 
-if config == None:
+if config is None:
     print("Failed to load config")
     sys.exit(1)
 
@@ -192,48 +191,32 @@ def fetch_ips_from_file(fd):
         line = fd.readline()
     return rules
 
-def load_ldap():
+def load_ldap_groups(usercn):
     """
-        Query the LDAP directory for a full list of VPN groups.
-        We don't filter on the user because the format of the user DN can vary.
-        LDAP returns group members and IPs, that are stripped and parsed
-        into a dictionary.
-
-        Returns: a sdictionary of the form
-            schema = {    'vpn_group1':
-                            {'cn':
-                                ['noob1@mozilla.com',
-                                'noob2@mozilla.com'],
-                            'networks':
-                                ['192.168.0.1/24',
-                                '10.0.0.1/16:80 #comment',
-                                '10.0.0.1:22']
-                            },
-                        'vpn_group2': ...
-                     }
+    Queries LDAP endpoint for a list of groups this user is a member of.
+    Returns a list of strings - groups CNames.
     """
     conn = ldap.initialize(config.LDAP_URL)
     conn.simple_bind_s(config.LDAP_BIND_DN, config.LDAP_BIND_PASSWD)
-    res = conn.search_s(config.LDAP_BASE_DN, ldap.SCOPE_SUBTREE, config.LDAP_FILTER,
-                        ['cn', 'member', 'ipHostNumber'])
-    schema = {}
-    for grp in res:
-        ulist = []
-        hlist = []
-        group = grp[1]['cn'][0].decode('utf8')
-        if 'member' not in grp[1]:
-            # This is not a group.
-            continue
-        for u in grp[1]['member']:
-            try:
-                ulist.append(u.decode('utf8').split('=')[1].split(',')[0])
-            except:
-                print('Failed to load user from LDAP')
-                print({'user': u, 'group': group})
-        if 'ipHostNumber' in grp[1]:
-            hlist = grp[1]['ipHostNumber']
-        schema[group] = {'cn': ulist, 'networks': hlist}
-    return schema
+    f = config.LDAP_USER_FILTER.format(usercn=usercn)
+    res = conn.search_s(config.LDAP_BASE_DN, ldap.SCOPE_SUBTREE,
+                        f, ['cn', 'memberOf'])
+    if len(res) == 0:
+        print(f"No matching user found for {usercn}.")
+        return []
+    if len(res) > 1:
+        print(f"More than one matching user found for {usercn}.")
+        return []
+    attrs = res[0][1]
+    groups = []
+    for g in attrs['memberOf']:
+        try:
+            groups.append(
+                g.decode('utf8').split(',')[0].split('=')[1])
+        except:
+            print('Failed to load user groups from LDAP')
+            print({'user': usercn, 'group': g})
+    return groups
 
 def load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets):
     """
@@ -270,7 +253,7 @@ def load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets):
                     build_firewall_rule(usersrcip, usersrcip, destip, destport,
                                         protocol, comment)
             else:
-                build_firewall_rule(usersrcip ,usersrcip, destip, '', '',
+                build_firewall_rule(usersrcip, usersrcip, destip, '', '',
                                     comment)
     else:
         rule_file = config.RULES + "/" + group + '.rules'
@@ -319,12 +302,14 @@ def load_rules(usersrcip, usercn, dev):
     """
     usergroups = ""
     uniq_nets = list()
-    schema = load_ldap()
-    for group in schema:
-        if usercn in schema[group]['cn']:
-            networks = schema[group]['networks']
-            load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets)
-            usergroups += group + ';'
+    print(f"Querying groups for user {usercn}")
+    groups = load_ldap_groups(usercn)
+    print(groups)
+    for group in groups:
+        # TODO: Support fetching networks lists from group attributes.
+        load_group_rule(usersrcip, usercn, dev, group, [], uniq_nets)
+        usergroups += group + ';'
+
     load_per_user_rules(usersrcip, usercn, dev)
     return usergroups
 
@@ -431,7 +416,6 @@ def main():
         global DRY_RUN
         DRY_RUN = True
         usergroups = load_rules(vpn_ip, usercn, device)
-        print(usergroups)
     else:
         print('Logging success: OpenVPN unknown operation')
         print({'srcip': client_ip, 'srcport': client_port, 'user': usercn})
