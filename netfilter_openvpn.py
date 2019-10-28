@@ -62,20 +62,6 @@ if config == None:
     print("Failed to load config")
     sys.exit(1)
 
-class MDMock:
-        def send(self, summary='', details=None):
-                print(("netfilter: %s" % summary))
-                print(("netfilter: %s" % details))
-
-
-# #MozDef Logging
-# mdmsg = mozdef.MozDefMsg(config.MOZDEF_HOST, tags=['openvpn', 'netfilter'])
-# if config.USE_SYSLOG:
-#     mdmsg.sendToSyslog = True
-# if not config.USE_MOZDEF:
-#     mdmsg.syslogOnly = True
-
-mdmsg = MDMock()
 
 @contextmanager
 def lock_timeout(seconds):
@@ -100,8 +86,8 @@ def wait_for_lock():
                 lockfd = open(config.LOCKPATH, 'a+')
                 fcntl.flock(lockfd, fcntl.LOCK_EX)
             except (IOError, OSError) as e:
-                mdmsg.send(summary='Failed to aquire lock.',
-                    details={"lock_path": config.LOCKPATH, "error": e.errno, "lock_retry_seconds": config.LOCKWAITTIME})
+                print('Failed to aquire lock.')
+                print({"lock_path": config.LOCKPATH, "error": e.errno, "lock_retry_seconds": config.LOCKWAITTIME})
             else:
                 acquired = True
             retries += 1
@@ -242,7 +228,8 @@ def load_ldap():
             try:
                 ulist.append(u.decode('utf8').split('=')[1].split(',')[0])
             except:
-                mdmsg.send(summary='Failed to load user from LDAP', details={'user': u, 'group': group})
+                print('Failed to load user from LDAP')
+                print({'user': u, 'group': group})
         if 'ipHostNumber' in grp[1]:
             hlist = grp[1]['ipHostNumber']
         schema[group] = {'cn': ulist, 'networks': hlist}
@@ -291,7 +278,8 @@ def load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets):
             fd = open(rule_file)
         except:
             # Skip if file is not found
-            mdmsg.send(summary="Failed to open rule file, skipping group", details={'rule_file': rule_file, 'user': usercn})
+            print("Failed to open rule file, skipping group")
+            print({'rule_file': rule_file, 'user': usercn})
             return
 
         comment = usercn + ':' + group + ' file_acl'
@@ -356,8 +344,8 @@ def kill_block_hack(usersrcip, usercn):
     try:
         iptables('-D INPUT -s ' + usersrcip + ' -j DROP')
     except:
-        mdmsg.send(summary='Failed to delete blocking rule, potential security issue', severity='CRITICAL',
-        details={'vpnip': usersrcip, 'user': usercn})
+        print('Failed to delete blocking rule, potential security issue')
+        print({'vpnip': usersrcip, 'user': usercn})
 
 def add_chain(usersrcip, usercn, dev):
     """
@@ -367,8 +355,8 @@ def add_chain(usersrcip, usercn, dev):
     """
     usergroups = ""
     if chain_exists(usersrcip):
-        mdmsg.send(summary='Attempted to replace an existing chain, failing.',
-            details={'vpnip': usersrcip, 'user': usercn})
+        print('Attempted to replace an existing chain, failing.')
+        print({'vpnip': usersrcip, 'user': usercn})
         return False
     iptables('-N ' + usersrcip)
     ipset('--create ' + usersrcip + ' nethash')
@@ -426,27 +414,27 @@ def main():
     operation = sys.argv[1]
 
     if operation == 'add':
-        mdmsg.send(summary='Logging success: OpenVPN endpoint connected',
-            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        print('Logging success: OpenVPN endpoint connected')
+        print({'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
         return add_chain(vpn_ip, usercn, device)
     elif operation == 'update':
-        mdmsg.send(summary='Logging success: OpenVPN endpoint re-connected',
-            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        print('Logging success: OpenVPN endpoint re-connected')
+        print({'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
         return update_chain(vpn_ip, usercn, device)
     elif operation == 'delete':
-        mdmsg.send(summary='Logout success: OpenVPN endpoint disconnected',
-            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        print('Logout success: OpenVPN endpoint disconnected')
+        print({'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
         del_chain(vpn_ip, device)
     elif operation == 'test-rules':
-        mdmsg.send(summary='Test rules mode',
-            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        print('Test rules mode')
+        print({'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
         global DRY_RUN
         DRY_RUN = True
         usergroups = load_rules(vpn_ip, usercn, device)
         print(usergroups)
     else:
-        mdmsg.send(summary='Logging success: OpenVPN unknown operation',
-            details={'srcip': client_ip, 'srcport': client_port, 'user': usercn})
+        print('Logging success: OpenVPN unknown operation')
+        print({'srcip': client_ip, 'srcport': client_port, 'user': usercn})
     return True
 
 if __name__ == "__main__":
