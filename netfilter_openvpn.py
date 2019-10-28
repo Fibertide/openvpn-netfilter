@@ -51,15 +51,17 @@ import imp
 cfg_path = ['netfilter_openvpn.conf', '/etc/openvpn/netfilter_openvpn.conf', '/etc/netfilter_openvpn.conf']
 config = None
 
+DRY_RUN = False
+
 for cfg in cfg_path:
-	try:
-		config = imp.load_source('config', cfg)
-	except:
-		pass
+    try:
+        config = imp.load_source('config', cfg)
+    except:
+        pass
 
 if config == None:
-	print("Failed to load config")
-	sys.exit(1)
+    print("Failed to load config")
+    sys.exit(1)
 
 class MDMock:
         def send(self, summary='', details=None):
@@ -70,380 +72,380 @@ class MDMock:
 # #MozDef Logging
 # mdmsg = mozdef.MozDefMsg(config.MOZDEF_HOST, tags=['openvpn', 'netfilter'])
 # if config.USE_SYSLOG:
-# 	mdmsg.sendToSyslog = True
+#     mdmsg.sendToSyslog = True
 # if not config.USE_MOZDEF:
-# 	mdmsg.syslogOnly = True
+#     mdmsg.syslogOnly = True
 
 mdmsg = MDMock()
 
 @contextmanager
 def lock_timeout(seconds):
-	def timeout_handler(signum, frame):
-		pass
-	original_handler = signal.signal(signal.SIGALRM, timeout_handler)
-	try:
-		signal.alarm(seconds)
-		yield
-	finally:
-		signal.alarm(0)
-		signal.signal(signal.SIGALRM, original_handler)
+    def timeout_handler(signum, frame):
+        pass
+    original_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    try:
+        signal.alarm(seconds)
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, original_handler)
 
 def wait_for_lock():
-	acquired = False
-	retries = 0
-	while not acquired:
-		with lock_timeout(config.LOCKWAITTIME):
-			if retries >= config.LOCKRETRIESMAX:
-				return None
-			try:
-				lockfd = open(config.LOCKPATH, 'a+')
-				fcntl.flock(lockfd, fcntl.LOCK_EX)
-			except (IOError, OSError) as e:
-				mdmsg.send(summary='Failed to aquire lock.',
-					details={"lock_path": config.LOCKPATH, "error": e.errno, "lock_retry_seconds": config.LOCKWAITTIME})
-			else:
-				acquired = True
-			retries += 1
-	return lockfd
+    acquired = False
+    retries = 0
+    while not acquired:
+        with lock_timeout(config.LOCKWAITTIME):
+            if retries >= config.LOCKRETRIESMAX:
+                return None
+            try:
+                lockfd = open(config.LOCKPATH, 'a+')
+                fcntl.flock(lockfd, fcntl.LOCK_EX)
+            except (IOError, OSError) as e:
+                mdmsg.send(summary='Failed to aquire lock.',
+                    details={"lock_path": config.LOCKPATH, "error": e.errno, "lock_retry_seconds": config.LOCKWAITTIME})
+            else:
+                acquired = True
+            retries += 1
+    return lockfd
 
 def free_lock(lockfd):
-	fcntl.flock(lockfd, fcntl.LOCK_UN)
-	lockfd.close()
-	return
+    fcntl.flock(lockfd, fcntl.LOCK_UN)
+    lockfd.close()
+    return
 
 class IptablesFailure (Exception):
-	pass
+    pass
 
 def iptables(args, raiseEx=True):
-	"""
-		Load the firewall rule received as argument on the local system, using
-		the iptables binary
+    """
+        Load the firewall rule received as argument on the local system, using
+        the iptables binary
 
-		Return: True on success, Exception on error if raiseEX=True
-				False on error if raiseEx=False
-	"""
-	command = "%s %s" % (config.IPTABLES, args)
-	status = os.system(command)
-	if status == -1:
-		raise IptablesFailure("failed to invoke iptables (%s)" % (command,))
-	status = os.WEXITSTATUS(status)
-	if raiseEx and (status != 0):
-		raise IptablesFailure("iptables exited with status %d (%s)" %
-								(status, command))
-	if (status != 0):
-		return False
-	return True
+        Return: True on success, Exception on error if raiseEX=True
+                False on error if raiseEx=False
+    """
+    command = "%s %s" % (config.IPTABLES, args)
+    status = os.system(command)
+    if status == -1:
+        raise IptablesFailure("failed to invoke iptables (%s)" % (command,))
+    status = os.WEXITSTATUS(status)
+    if raiseEx and (status != 0):
+        raise IptablesFailure("iptables exited with status %d (%s)" %
+                                (status, command))
+    if (status != 0):
+        return False
+    return True
 
 class IpsetFailure (Exception):
-	pass
+    pass
 
 def ipset(args, raiseEx=False):
-	"""
-		Manages an IP Set using the ipset binary
+    """
+        Manages an IP Set using the ipset binary
 
-		Return: True on success, Exception on error if raiseEX=True
-				False on error if raiseEx=False
-	"""
-	command = "%s %s" % (config.IPSET, args)
-	status = os.system(command)
-	if status == -1:
-		raise IpsetFailure("failed to invoke ipset (%s)" % (command,))
-	status = os.WEXITSTATUS(status)
-	if raiseEx and (status != 0):
-		raise IpsetFailure("ipset exited with status %d (%s)" %
-							(status, command))
-	if (status != 0):
-		return False
-	return True
+        Return: True on success, Exception on error if raiseEX=True
+                False on error if raiseEx=False
+    """
+    command = "%s %s" % (config.IPSET, args)
+    status = os.system(command)
+    if status == -1:
+        raise IpsetFailure("failed to invoke ipset (%s)" % (command,))
+    status = os.WEXITSTATUS(status)
+    if raiseEx and (status != 0):
+        raise IpsetFailure("ipset exited with status %d (%s)" %
+                            (status, command))
+    if (status != 0):
+        return False
+    return True
 
 def build_firewall_rule(name, usersrcip, destip, destport=None, protocol=None,
-						comment=None):
-	"""
-		This function will select the best way to insert the rule in iptables.
-		If protocol+dport are defined, create a simple iptables rule.
-		If only a destination net is set, insert it into the user's ipset.
+                        comment=None):
+    """
+        This function will select the best way to insert the rule in iptables.
+        If protocol+dport are defined, create a simple iptables rule.
+        If only a destination net is set, insert it into the user's ipset.
 
-		Arguments:
-			'protocol', 'destport' and 'comment' are optional
-			'destport' requires 'protocol'
-	"""
-	if comment:
-		comment = " -m comment --comment \"" + comment + "\""
-	if destport and protocol:
-		destport = ' -m multiport --dports ' + destport
-		protocol = ' -p ' + protocol
-		rule = "-A {name} -s {srcip} -d {dstip} {proto}{dport}{comment} -j ACCEPT".format(
-					name=name,
-					srcip=usersrcip,
-					dstip=destip,
-					dport=destport,
-					proto=protocol,
-					comment=comment
-				)
-		iptables(rule)
-	else:
-		entry = "--add {name} {dstip}".format(name=name, dstip=destip)
-		ipset(entry)
+        Arguments:
+            'protocol', 'destport' and 'comment' are optional
+            'destport' requires 'protocol'
+    """
+    if comment:
+        comment = " -m comment --comment \"" + comment + "\""
+    if destport and protocol:
+        destport = ' -m multiport --dports ' + destport
+        protocol = ' -p ' + protocol
+        rule = "-A {name} -s {srcip} -d {dstip} {proto}{dport}{comment} -j ACCEPT".format(
+                    name=name,
+                    srcip=usersrcip,
+                    dstip=destip,
+                    dport=destport,
+                    proto=protocol,
+                    comment=comment
+                )
+        iptables(rule)
+    else:
+        entry = "--add {name} {dstip}".format(name=name, dstip=destip)
+        ipset(entry)
 
 def fetch_ips_from_file(fd):
-	"""
-		Read the IPs from a local file and return them into a dictionary
-	"""
-	rules = []
-	line = fd.readline()
-	while line != '':
-		if line.startswith('#'):
-			line = fd.readline()
-			continue
-		rules.append(line.split("\n")[0])
-		line = fd.readline()
-	return rules
+    """
+        Read the IPs from a local file and return them into a dictionary
+    """
+    rules = []
+    line = fd.readline()
+    while line != '':
+        if line.startswith('#'):
+            line = fd.readline()
+            continue
+        rules.append(line.split("\n")[0])
+        line = fd.readline()
+    return rules
 
 def load_ldap():
-	"""
-		Query the LDAP directory for a full list of VPN groups.
-		We don't filter on the user because the format of the user DN can vary.
-		LDAP returns group members and IPs, that are stripped and parsed
-		into a dictionary.
+    """
+        Query the LDAP directory for a full list of VPN groups.
+        We don't filter on the user because the format of the user DN can vary.
+        LDAP returns group members and IPs, that are stripped and parsed
+        into a dictionary.
 
-		Returns: a sdictionary of the form
-			schema = {	'vpn_group1':
-							{'cn':
-								['noob1@mozilla.com',
-								'noob2@mozilla.com'],
-							'networks':
-								['192.168.0.1/24',
-								'10.0.0.1/16:80 #comment',
-								'10.0.0.1:22']
-							},
-						'vpn_group2': ...
-					 }
-	"""
-	conn = ldap.initialize(config.LDAP_URL)
-	conn.simple_bind_s(config.LDAP_BIND_DN, config.LDAP_BIND_PASSWD)
-	res = conn.search_s(config.LDAP_BASE_DN, ldap.SCOPE_SUBTREE, config.LDAP_FILTER,
-						['cn', 'member', 'ipHostNumber'])
-	schema = {}
-	for grp in res:
-		ulist = []
-		hlist = []
-		group = grp[1]['cn'][0]
-		if 'member' not in grp[1]:
-			# This is not a group.
-			continue
-		for u in grp[1]['member']:
-			try:
-				ulist.append(u.split('=')[1].split(',')[0])
-			except:
-				mdmsg.send(summary='Failed to load user from LDAP', details={'user': u, 'group': group})
-		if grp[1].has_key('ipHostNumber'):
-			hlist = grp[1]['ipHostNumber']
-		schema[group] = {'cn': ulist, 'networks': hlist}
-	return schema
+        Returns: a sdictionary of the form
+            schema = {    'vpn_group1':
+                            {'cn':
+                                ['noob1@mozilla.com',
+                                'noob2@mozilla.com'],
+                            'networks':
+                                ['192.168.0.1/24',
+                                '10.0.0.1/16:80 #comment',
+                                '10.0.0.1:22']
+                            },
+                        'vpn_group2': ...
+                     }
+    """
+    conn = ldap.initialize(config.LDAP_URL)
+    conn.simple_bind_s(config.LDAP_BIND_DN, config.LDAP_BIND_PASSWD)
+    res = conn.search_s(config.LDAP_BASE_DN, ldap.SCOPE_SUBTREE, config.LDAP_FILTER,
+                        ['cn', 'member', 'ipHostNumber'])
+    schema = {}
+    for grp in res:
+        ulist = []
+        hlist = []
+        group = grp[1]['cn'][0]
+        if 'member' not in grp[1]:
+            # This is not a group.
+            continue
+        for u in grp[1]['member']:
+            try:
+                ulist.append(u.split('=')[1].split(',')[0])
+            except:
+                mdmsg.send(summary='Failed to load user from LDAP', details={'user': u, 'group': group})
+        if grp[1].has_key('ipHostNumber'):
+            hlist = grp[1]['ipHostNumber']
+        schema[group] = {'cn': ulist, 'networks': hlist}
+    return schema
 
 def load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets):
-	"""
-		Receive the LDAP ACLs for this user, and parse them into iptables rules
-		If no LDAP rule is submitted, try to load them from a local file
-	"""
-	if len(networks) != 0:
-		for net in networks:
-			"""
-				the attribute stored in net (ipHostNumber) contains 2 values:
-				'<CIDR usersrcip:port> # <comment>'
-				split on the '#' character to extract the comment, then split
-				on the ':' character to extract IP and Port
-			"""
-			ipHostNumber = net.split("#")
-			destination = ipHostNumber[0].strip()
+    """
+        Receive the LDAP ACLs for this user, and parse them into iptables rules
+        If no LDAP rule is submitted, try to load them from a local file
+    """
+    if len(networks) != 0:
+        for net in networks:
+            """
+                the attribute stored in net (ipHostNumber) contains 2 values:
+                '<CIDR usersrcip:port> # <comment>'
+                split on the '#' character to extract the comment, then split
+                on the ':' character to extract IP and Port
+            """
+            ipHostNumber = net.split("#")
+            destination = ipHostNumber[0].strip()
 
-			if destination in uniq_nets:
-				""" Skip duplicated destinations """
-				continue
-			uniq_nets.append(destination)
+            if destination in uniq_nets:
+                """ Skip duplicated destinations """
+                continue
+            uniq_nets.append(destination)
 
-			ldapcomment = ""
-			if len(ipHostNumber) >= 2:
-				ldapcomment = ipHostNumber[1] # extract the comment
-			comment = usercn + ':' + group + ' ldap_acl ' + ldapcomment
+            ldapcomment = ""
+            if len(ipHostNumber) >= 2:
+                ldapcomment = ipHostNumber[1] # extract the comment
+            comment = usercn + ':' + group + ' ldap_acl ' + ldapcomment
 
-			destarray = destination.split(':')
-			destip = destarray[0]
-			destport = ''
-			if len(destarray) >= 2:
-				destport = destarray[1]
-				for protocol in ['tcp', 'udp']:
-					build_firewall_rule(usersrcip, usersrcip, destip, destport,
-										protocol, comment)
-			else:
-				build_firewall_rule(usersrcip ,usersrcip, destip, '', '',
-									comment)
-	else:
-		rule_file = config.RULES + "/" + group + '.rules'
-		try:
-			fd = open(rule_file)
-		except:
-			# Skip if file is not found
-			mdmsg.send(summary="Failed to open rule file, skipping group", details={'rule_file': rule_file, 'user': usercn})
-			return
+            destarray = destination.split(':')
+            destip = destarray[0]
+            destport = ''
+            if len(destarray) >= 2:
+                destport = destarray[1]
+                for protocol in ['tcp', 'udp']:
+                    build_firewall_rule(usersrcip, usersrcip, destip, destport,
+                                        protocol, comment)
+            else:
+                build_firewall_rule(usersrcip ,usersrcip, destip, '', '',
+                                    comment)
+    else:
+        rule_file = config.RULES + "/" + group + '.rules'
+        try:
+            fd = open(rule_file)
+        except:
+            # Skip if file is not found
+            mdmsg.send(summary="Failed to open rule file, skipping group", details={'rule_file': rule_file, 'user': usercn})
+            return
 
-		comment = usercn + ':' + group + ' file_acl'
-		for destip in fetch_ips_from_file(fd):
-			# create one rule for each direction
-			build_firewall_rule(usersrcip, usersrcip, destip, '', '', comment)
-			build_firewall_rule(usersrcip, destip, usersrcip, '', '', comment)
-		fd.close()
+        comment = usercn + ':' + group + ' file_acl'
+        for destip in fetch_ips_from_file(fd):
+            # create one rule for each direction
+            build_firewall_rule(usersrcip, usersrcip, destip, '', '', comment)
+            build_firewall_rule(usersrcip, destip, usersrcip, '', '', comment)
+        fd.close()
 
 def load_per_user_rules(usersrcip, usercn, dev):
-	"""
-		Load destination IPs from a flat file that exists on the VPN gateway,
-		and create the firewall rules accordingly.
-		This feature does not use LDAP at all.
+    """
+        Load destination IPs from a flat file that exists on the VPN gateway,
+        and create the firewall rules accordingly.
+        This feature does not use LDAP at all.
 
-		This feature is rarely used, and thus the function will simply exit
-		in silence if no file is found.
-	"""
-	rule_file = config.RULES + "/" + config.PER_USER_RULES_PREFIX + usercn
-	try:
-		fd = open(rule_file)
-	except:
-		return
-	comment = usercn + ":null user_specific_rule"
-	for destip in fetch_ips_from_file(fd):
-		build_firewall_rule(usersrcip, usersrcip, destip, '', '', comment)
-	fd.close()
+        This feature is rarely used, and thus the function will simply exit
+        in silence if no file is found.
+    """
+    rule_file = config.RULES + "/" + config.PER_USER_RULES_PREFIX + usercn
+    try:
+        fd = open(rule_file)
+    except:
+        return
+    comment = usercn + ":null user_specific_rule"
+    for destip in fetch_ips_from_file(fd):
+        build_firewall_rule(usersrcip, usersrcip, destip, '', '', comment)
+    fd.close()
 
 def load_rules(usersrcip, usercn, dev):
-	"""
-		First, get the list of VPN groups, with members and IPs, from LDAP.
-		Second, find the groups that the user belongs to, and create the rules.
-		Third, if per user rules exist, load them
-		And finally, insert a DROP rule at the bottom of the ruleset
+    """
+        First, get the list of VPN groups, with members and IPs, from LDAP.
+        Second, find the groups that the user belongs to, and create the rules.
+        Third, if per user rules exist, load them
+        And finally, insert a DROP rule at the bottom of the ruleset
 
-		Return: A string with the LDAP groups the user belongs to
-	"""
-	usergroups = ""
-	uniq_nets = list()
-	schema = load_ldap()
-	for group in schema:
-		if usercn in schema[group]['cn']:
-			networks = schema[group]['networks']
-			load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets)
-			usergroups += group + ';'
-	load_per_user_rules(usersrcip, usercn, dev)
-	return usergroups
+        Return: A string with the LDAP groups the user belongs to
+    """
+    usergroups = ""
+    uniq_nets = list()
+    schema = load_ldap()
+    for group in schema:
+        if usercn in schema[group]['cn']:
+            networks = schema[group]['networks']
+            load_group_rule(usersrcip, usercn, dev, group, networks, uniq_nets)
+            usergroups += group + ';'
+    load_per_user_rules(usersrcip, usercn, dev)
+    return usergroups
 
 def chain_exists(name):
-	"""
-		Test existance of a chain via the iptables binary
-	"""
-	return iptables('-L ' + name, False)
+    """
+        Test existance of a chain via the iptables binary
+    """
+    return iptables('-L ' + name, False)
 
 def kill_block_hack(usersrcip, usercn):
-	"""
-		Removes the general block on the vpn IP.
-		This is done because we just block the IP and start the script so that openvpn doesnt block.
-		But we don't know if the operation will succeed yet, so it doesnt allow traffic just to be safe.
-		This function allows traffic through.
-	"""
-	try:
-		iptables('-D INPUT -s ' + usersrcip + ' -j DROP')
-	except:
-		mdmsg.send(summary='Failed to delete blocking rule, potential security issue', severity='CRITICAL',
-		details={'vpnip': usersrcip, 'user': usercn})
+    """
+        Removes the general block on the vpn IP.
+        This is done because we just block the IP and start the script so that openvpn doesnt block.
+        But we don't know if the operation will succeed yet, so it doesnt allow traffic just to be safe.
+        This function allows traffic through.
+    """
+    try:
+        iptables('-D INPUT -s ' + usersrcip + ' -j DROP')
+    except:
+        mdmsg.send(summary='Failed to delete blocking rule, potential security issue', severity='CRITICAL',
+        details={'vpnip': usersrcip, 'user': usercn})
 
 def add_chain(usersrcip, usercn, dev):
-	"""
-		Create a custom chain for the VPN user, named using his source IP
-		Load the LDAP rules into the custom chain
-		Jump traffic to the custom chain from the INPUT,OUTPUT & FORWARD chains
-	"""
-	usergroups = ""
-	if chain_exists(usersrcip):
-		mdmsg.send(summary='Attempted to replace an existing chain, failing.',
-			details={'vpnip': usersrcip, 'user': usercn})
-		return False
-	iptables('-N ' + usersrcip)
-	ipset('--create ' + usersrcip + ' nethash')
-	usergroups = load_rules(usersrcip, usercn, dev)
-	iptables('-A OUTPUT -d ' + usersrcip + ' -j ' + usersrcip)
-	iptables('-A INPUT -s ' + usersrcip + ' -j ' + usersrcip)
-	iptables('-A FORWARD -s ' + usersrcip + ' -j ' + usersrcip)
-	iptables('-A FORWARD -d ' + usersrcip + ' -j ' + usersrcip)
-	comment = usercn + ' groups: ' + usergroups
-	if len(comment) > 254:
-		comment = comment[:243] + '..truncated...'
-	iptables('-I ' + usersrcip + ' -s ' + usersrcip +
-			 ' -m set --match-set ' + usersrcip + ' dst -j ACCEPT' +
-			 ' -m comment --comment "' + comment[:254] + '"')
-	iptables('-I ' + usersrcip + ' -m conntrack --ctstate ESTABLISHED -j ACCEPT' +
-			 ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
-	iptables('-A ' + usersrcip + ' -j LOG --log-prefix "DROP ' + usercn[:23] +
-			 ' "' + ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
-	iptables('-A ' + usersrcip + ' -j DROP' +
-			 ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
-	kill_block_hack(usersrcip, usercn)
-	return True
+    """
+        Create a custom chain for the VPN user, named using his source IP
+        Load the LDAP rules into the custom chain
+        Jump traffic to the custom chain from the INPUT,OUTPUT & FORWARD chains
+    """
+    usergroups = ""
+    if chain_exists(usersrcip):
+        mdmsg.send(summary='Attempted to replace an existing chain, failing.',
+            details={'vpnip': usersrcip, 'user': usercn})
+        return False
+    iptables('-N ' + usersrcip)
+    ipset('--create ' + usersrcip + ' nethash')
+    usergroups = load_rules(usersrcip, usercn, dev)
+    iptables('-A OUTPUT -d ' + usersrcip + ' -j ' + usersrcip)
+    iptables('-A INPUT -s ' + usersrcip + ' -j ' + usersrcip)
+    iptables('-A FORWARD -s ' + usersrcip + ' -j ' + usersrcip)
+    iptables('-A FORWARD -d ' + usersrcip + ' -j ' + usersrcip)
+    comment = usercn + ' groups: ' + usergroups
+    if len(comment) > 254:
+        comment = comment[:243] + '..truncated...'
+    iptables('-I ' + usersrcip + ' -s ' + usersrcip +
+             ' -m set --match-set ' + usersrcip + ' dst -j ACCEPT' +
+             ' -m comment --comment "' + comment[:254] + '"')
+    iptables('-I ' + usersrcip + ' -m conntrack --ctstate ESTABLISHED -j ACCEPT' +
+             ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
+    iptables('-A ' + usersrcip + ' -j LOG --log-prefix "DROP ' + usercn[:23] +
+             ' "' + ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
+    iptables('-A ' + usersrcip + ' -j DROP' +
+             ' -m comment --comment "' + usercn + ' at ' + usersrcip + '"')
+    kill_block_hack(usersrcip, usercn)
+    return True
 
 def del_chain(usersrcip, dev):
-	"""
-		Delete the custom chain and all associated rules
-	"""
-	iptables('-D OUTPUT -d ' + usersrcip + ' -j ' + usersrcip, False)
-	iptables('-D INPUT -s ' + usersrcip + ' -j ' + usersrcip, False)
-	iptables('-D FORWARD -s ' + usersrcip + ' -j ' + usersrcip, False)
-	iptables('-D FORWARD -d ' + usersrcip + ' -j ' + usersrcip, False)
-	iptables('-F ' + usersrcip, False)
-	iptables('-X ' + usersrcip, False)
-	ipset("--destroy " + usersrcip, False)
+    """
+        Delete the custom chain and all associated rules
+    """
+    iptables('-D OUTPUT -d ' + usersrcip + ' -j ' + usersrcip, False)
+    iptables('-D INPUT -s ' + usersrcip + ' -j ' + usersrcip, False)
+    iptables('-D FORWARD -s ' + usersrcip + ' -j ' + usersrcip, False)
+    iptables('-D FORWARD -d ' + usersrcip + ' -j ' + usersrcip, False)
+    iptables('-F ' + usersrcip, False)
+    iptables('-X ' + usersrcip, False)
+    ipset("--destroy " + usersrcip, False)
 
 def update_chain(usersrcip, usercn, dev):
-	"""
-		Wrapper function around add and delete
-	"""
-	del_chain(usersrcip, dev)
-	return add_chain(usersrcip, usercn, dev)
+    """
+        Wrapper function around add and delete
+    """
+    del_chain(usersrcip, dev)
+    return add_chain(usersrcip, usercn, dev)
 
 def main():
-	device = os.environ.get('dev', 'lo')
-	client_ip = os.environ.get('untrusted_ip', '127.0.0.1')
-	vpn_ip = os.environ.get('address', '127.0.0.1')
-	client_port = os.environ.get('untrusted_port', '0')
-	usercn = os.environ.get('common_name', None)
-	if usercn == None:
-		usercn = os.environ.get('username', None)
+    device = os.environ.get('dev', 'lo')
+    client_ip = os.environ.get('untrusted_ip', '127.0.0.1')
+    vpn_ip = os.environ.get('address', '127.0.0.1')
+    client_port = os.environ.get('untrusted_port', '0')
+    usercn = os.environ.get('common_name', None)
+    if usercn == None:
+        usercn = os.environ.get('username', None)
 
-	if len(sys.argv) < 2:
-		print("USAGE: %s <operation>" % sys.argv[0])
-		return False
-	operation = sys.argv[1]
+    if len(sys.argv) < 2:
+        print("USAGE: %s <operation>" % sys.argv[0])
+        return False
+    operation = sys.argv[1]
 
-	if operation == 'add':
-		mdmsg.send(summary='Logging success: OpenVPN endpoint connected',
-			details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
-		return add_chain(vpn_ip, usercn, device)
-	elif operation == 'update':
-		mdmsg.send(summary='Logging success: OpenVPN endpoint re-connected',
-			details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
-		return update_chain(vpn_ip, usercn, device)
-	elif operation == 'delete':
-		mdmsg.send(summary='Logout success: OpenVPN endpoint disconnected',
-			details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
-		del_chain(vpn_ip, device)
-	else:
-		mdmsg.send(summary='Logging success: OpenVPN unknown operation',
-			details={'srcip': client_ip, 'srcport': client_port, 'user': usercn})
-	return True
+    if operation == 'add':
+        mdmsg.send(summary='Logging success: OpenVPN endpoint connected',
+            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        return add_chain(vpn_ip, usercn, device)
+    elif operation == 'update':
+        mdmsg.send(summary='Logging success: OpenVPN endpoint re-connected',
+            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        return update_chain(vpn_ip, usercn, device)
+    elif operation == 'delete':
+        mdmsg.send(summary='Logout success: OpenVPN endpoint disconnected',
+            details={'srcip': client_ip, 'vpnip': vpn_ip, 'srcport': client_port, 'user': usercn})
+        del_chain(vpn_ip, device)
+    else:
+        mdmsg.send(summary='Logging success: OpenVPN unknown operation',
+            details={'srcip': client_ip, 'srcport': client_port, 'user': usercn})
+    return True
 
 if __name__ == "__main__":
-#	we only authorize one script execution at a time
-	lockfd = wait_for_lock()
-	if (lockfd == None):
-		sys.exit(1)
+#    we only authorize one script execution at a time
+    lockfd = wait_for_lock()
+    if (lockfd == None):
+        sys.exit(1)
 
-	if main():
-		free_lock(lockfd)
-		sys.exit(0)
+    if main():
+        free_lock(lockfd)
+        sys.exit(0)
 
-	free_lock(lockfd)
-	sys.exit(1)
+    free_lock(lockfd)
+    sys.exit(1)
