@@ -202,10 +202,10 @@ def load_ldap_groups(usercn):
     res = conn.search_s(config.LDAP_BASE_DN, ldap.SCOPE_SUBTREE,
                         f, ['cn', 'memberOf'])
     if len(res) == 0:
-        print(f"No matching user found for {usercn}.")
+        print("No matching user found for {usercn}.".format(usercn=usercn))
         return []
     if len(res) > 1:
-        print(f"More than one matching user found for {usercn}.")
+        print("More than one matching user found for {usercn}.".format(usercn=usercn))
         return []
     attrs = res[0][1]
     groups = []
@@ -302,7 +302,7 @@ def load_rules(usersrcip, usercn, dev):
     """
     usergroups = ""
     uniq_nets = list()
-    print(f"Querying groups for user {usercn}")
+    print("Querying groups for user {usercn}".format(usercn=usercn))
     groups = load_ldap_groups(usercn)
     print(groups)
     for group in groups:
