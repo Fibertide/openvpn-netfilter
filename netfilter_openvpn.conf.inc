@@ -3,7 +3,7 @@ LDAP_URL='ldap://<%= ldap_server %>'
 LDAP_BIND_DN='uid=<%= bind_user %>,ou=logins,dc=mozilla'
 LDAP_BIND_PASSWD='<%= bind_password %>'
 LDAP_BASE_DN='ou=groups,dc=mozilla'
-LDAP_FILTER='cn=vpn_*'
+LDAP_USER_FILTER='(|(uid={usercn})(sAMAccountName={usercn})(userPrincipalName={usercn}))'
 
 # Common stuff
 IPTABLES='/sbin/iptables'
